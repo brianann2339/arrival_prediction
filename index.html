@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>急診來診量預測</title>
+<meta name="description" content="急診戰情室每 5 分鐘更新的 1 / 8 / 24 小時來診量預測：資料、方法、特徵、最後採用的模型、驗證、硬體需求與維護。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+:root{
+  color-scheme: light;
+  --bg:#f3f5f8; --surface:#ffffff; --surface-2:#e9edf3; --ink:#16202e; --ink-2:#3d4a5c; --muted:#5f6b7d;
+  --line:#d8dee7; --line-2:#c3cbd6; --accent:#2a78d6; --accent-ink:#1d5fb0;
+  --w1:#2a78d6; --w8:#eb6834; --w24:#1baf7a; --w24-ink:#0f7f57;
+  --grid:#e4e9f0; --tip-bg:#16202e; --tip-ink:#ffffff; --band:rgba(42,120,214,.10);
+  --mark-actual:#16202e; --ok:#0f7f57; --warn:#a15c00;
+  --sans:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --mono:"IBM Plex Mono","Noto Sans TC","Consolas",ui-monospace,monospace;
+  --measure:72ch;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#0f141b; --surface:#171e28; --surface-2:#1f2836; --ink:#e7ecf3; --ink-2:#c3ccd8; --muted:#9aa6b6;
+    --line:#2a3441; --line-2:#3a4655; --accent:#3987e5; --accent-ink:#7db3f2;
+    --w1:#3987e5; --w8:#d95926; --w24:#199e70; --w24-ink:#4cc493;
+    --grid:#232d3a; --tip-bg:#e7ecf3; --tip-ink:#0f141b; --band:rgba(57,135,229,.16);
+    --mark-actual:#e7ecf3; --ok:#4cc493; --warn:#e0a24a;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0f141b; --surface:#171e28; --surface-2:#1f2836; --ink:#e7ecf3; --ink-2:#c3ccd8; --muted:#9aa6b6;
+  --line:#2a3441; --line-2:#3a4655; --accent:#3987e5; --accent-ink:#7db3f2;
+  --w1:#3987e5; --w8:#d95926; --w24:#199e70; --w24-ink:#4cc493;
+  --grid:#232d3a; --tip-bg:#e7ecf3; --tip-ink:#0f141b; --band:rgba(57,135,229,.16);
+  --mark-actual:#e7ecf3; --ok:#4cc493; --warn:#e0a24a;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.75;
+  padding-inline:16px;padding-block:0 64px;}
+a{color:var(--accent-ink);text-decoration-thickness:1px;text-underline-offset:3px}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+h1,h2,h3{font-weight:600;line-height:1.3;text-wrap:balance;margin:0}
+h1{font-size:clamp(28px,4.5vw,40px);letter-spacing:-.01em}
+h2{font-size:clamp(21px,2.6vw,26px);margin-top:0}
+h3{font-size:17.5px;margin-top:28px;margin-bottom:8px}
+p{margin:0 0 14px;max-width:var(--measure)}
+ul,ol{max-width:var(--measure);padding-left:1.3em;margin:0 0 14px}
+li{margin-bottom:6px}
+li::marker{color:var(--muted)}
+strong{font-weight:600}
+code,kbd{font-family:var(--mono);font-size:.9em;background:var(--surface-2);padding:.08em .35em;border-radius:3px;color:var(--ink-2)}
+pre{font-family:var(--mono);font-size:13.5px;line-height:1.6;background:var(--surface-2);padding:12px 14px;border-radius:6px;overflow-x:auto;margin:0 0 14px;color:var(--ink)}
+.num,td.n,th.n{font-variant-numeric:tabular-nums}
+small,.small{font-size:13.5px;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+
+/* header */
+.masthead{max-width:1120px;margin:0 auto;padding-block:36px 26px;border-bottom:1px solid var(--line)}
+.eyebrow{font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:500;margin-bottom:10px}
+.lede{font-size:17.5px;color:var(--ink-2);max-width:64ch;margin:14px 0 18px}
+.chips{display:flex;flex-wrap:wrap;gap:8px 10px;margin:0;padding:0;list-style:none}
+.chips li{font-size:13px;color:var(--ink-2);background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px 11px;white-space:nowrap}
+.chips li b{font-weight:600;color:var(--ink)}
+
+/* shell */
+.shell{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:232px minmax(0,1fr);gap:40px;padding-top:28px}
+nav.toc{position:sticky;top:20px;align-self:start;font-size:14px}
+nav.toc .toc-title{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;font-weight:500}
+nav.toc ol{list-style:none;padding:0;margin:0;border-left:1px solid var(--line)}
+nav.toc li{margin:0}
+nav.toc a{display:block;padding:5px 12px;color:var(--ink-2);text-decoration:none;border-left:2px solid transparent;margin-left:-1px;line-height:1.4}
+nav.toc a:hover{color:var(--ink);border-left-color:var(--line-2)}
+nav.toc a.is-active{color:var(--accent-ink);border-left-color:var(--accent);font-weight:500}
+nav.toc .toc-num{display:inline-block;width:1.7em;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12.5px}
+main{min-width:0}
+section{padding-block:8px 36px;border-bottom:1px solid var(--line);margin-bottom:28px;scroll-margin-top:16px}
+section:last-of-type{border-bottom:0}
+.sec-num{font-family:var(--mono);font-size:13px;color:var(--muted);display:block;margin-bottom:4px}
+.toc-mobile{display:none}
+
+/* board card */
+.board{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px 18px;margin:18px 0 20px;max-width:none}
+.board .stamp{font-size:12.5px;color:var(--muted);letter-spacing:.06em;font-family:var(--mono);margin-bottom:8px}
+.board .line{font-family:var(--mono);font-size:14.5px;line-height:1.7;color:var(--ink);white-space:normal;margin:0}
+.board .line + .line{margin-top:4px}
+.board .line b{font-weight:500;color:var(--accent-ink)}
+.windows{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 18px;padding:0;list-style:none}
+.windows li{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;border-top:3px solid var(--wc)}
+.windows .w{font-family:var(--mono);font-size:13px;color:var(--muted);letter-spacing:.04em}
+.windows .h{font-size:17px;font-weight:600;margin:2px 0 6px}
+.windows p{font-size:14px;color:var(--ink-2);margin:0;line-height:1.6}
+
+/* tables */
+.tbl{overflow-x:auto;margin:0 0 16px;max-width:100%}
+table{border-collapse:collapse;font-size:14px;line-height:1.5;min-width:100%}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+th{font-weight:600;color:var(--ink-2);font-size:13px;letter-spacing:.02em;border-bottom:1px solid var(--line-2);white-space:nowrap}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tbody tr:hover td{background:var(--surface)}
+td .mono,.mono{font-family:var(--mono);font-size:.92em}
+.tbl caption{caption-side:top;text-align:left;font-size:13.5px;color:var(--muted);padding:0 0 8px}
+.ok{color:var(--ok);font-weight:500}.warn{color:var(--warn);font-weight:500}
+
+/* figures */
+figure{margin:20px 0 22px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px 12px;max-width:100%;position:relative}
+figure .fig-title{font-weight:600;font-size:15px;margin:0 0 2px}
+figure .fig-sub{font-size:13px;color:var(--muted);margin:0 0 10px}
+figure svg{display:block;width:100%;height:auto;max-width:100%;overflow:visible}
+figure svg text{font-family:var(--sans);fill:var(--muted);font-size:12px}
+figure svg .axis line,figure svg .axis path{stroke:var(--line-2)}
+figure svg .grid line{stroke:var(--grid)}
+figcaption{font-size:13.5px;color:var(--ink-2);margin-top:10px;line-height:1.6;max-width:var(--measure)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--ink-2);margin:6px 0 4px;padding:0;list-style:none}
+.legend li{display:flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:14px;height:3px;border-radius:2px;background:var(--c)}
+.sw.dot{width:9px;height:9px;border-radius:50%}
+.sw.dia{width:9px;height:9px;transform:rotate(45deg);border-radius:1px}
+.sw.bar{width:14px;height:8px;border-radius:2px;opacity:.9}
+.tip{position:absolute;pointer-events:none;background:var(--tip-bg);color:var(--tip-ink);font-size:12.5px;line-height:1.45;padding:6px 9px;border-radius:5px;white-space:nowrap;transform:translate(-50%,calc(-100% - 10px));opacity:0;transition:opacity .08s;z-index:2;font-variant-numeric:tabular-nums}
+.tip.show{opacity:1}
+details.data{margin-top:8px}
+details.data summary{cursor:pointer;font-size:13px;color:var(--accent-ink)}
+details.data table{font-size:12.5px}
+
+/* flow diagrams */
+.flow{list-style:none;padding:0;margin:14px 0 20px;max-width:var(--measure);counter-reset:step}
+.flow li{position:relative;padding:12px 14px 12px 52px;background:var(--surface);border:1px solid var(--line);border-radius:8px;margin:0 0 10px;counter-increment:step}
+.flow li::before{content:counter(step);position:absolute;left:14px;top:12px;width:26px;height:26px;border-radius:50%;background:var(--surface-2);color:var(--ink-2);font-family:var(--mono);font-size:13px;display:flex;align-items:center;justify-content:center}
+.flow li::after{content:"";position:absolute;left:26px;bottom:-11px;width:1px;height:11px;background:var(--line-2)}
+.flow li:last-child::after{display:none}
+.flow .t{font-weight:600;display:block;margin-bottom:2px}
+.flow .d{font-size:14px;color:var(--ink-2);line-height:1.6}
+.flow .f{font-family:var(--mono);font-size:13px;color:var(--ink-2);display:block;margin-top:4px}
+.lanes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0 18px;padding:0;list-style:none}
+.lanes li{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:14px;line-height:1.6;color:var(--ink-2)}
+.lanes .where{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:500;margin-bottom:4px}
+.lanes .what{font-weight:600;color:var(--ink);display:block;margin-bottom:4px}
+.callout{background:var(--surface);border-left:3px solid var(--accent);padding:12px 16px;border-radius:0 6px 6px 0;margin:16px 0 18px;max-width:var(--measure)}
+.callout p:last-child{margin-bottom:0}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 18px;font-size:14.5px;max-width:var(--measure);margin:0 0 16px}
+.kv dt{color:var(--muted);white-space:nowrap}
+.kv dd{margin:0;color:var(--ink)}
+footer{max-width:1120px;margin:40px auto 0;padding-top:20px;border-top:1px solid var(--line);font-size:13.5px;color:var(--muted);line-height:1.7}
+
+@media (max-width: 900px){
+  .shell{grid-template-columns:1fr;gap:0;padding-top:16px}
+  nav.toc{display:none}
+  .toc-mobile{display:block;margin:0 0 24px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px}
+  .toc-mobile summary{cursor:pointer;font-weight:500;font-size:14px}
+  .toc-mobile ol{margin:8px 0 4px;padding-left:1.6em;font-size:14px}
+  .toc-mobile li{margin-bottom:4px}
+  .windows,.lanes{grid-template-columns:1fr}
+}
+@media (max-width: 560px){
+  body{font-size:15.5px}
+  .board .line{font-size:13.5px}
+  figure{padding:12px 10px 10px}
+  .kv{grid-template-columns:1fr;gap:2px 0}
+  .kv dt{margin-top:8px}
+}
+@media (prefers-reduced-motion: reduce){ *{transition:none !important} }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="eyebrow">急診戰情室 · 技術說明</div>
+  <h1>急診來診量預測</h1>
+  <p class="lede">每 5 分鐘更新一次，預測接下來 1 小時、8 小時、24 小時會有多少人掛急診，附 95% 預測區間、與同日型基準比較的現況水位，以及「接下來 8 小時會不會爆量」的機率。這一頁說明它用什麼資料、怎麼算、用了哪些特徵、最後採用的模型是什麼、驗證結果、跑起來需要什麼硬體，以及怎麼維護。</p>
+  <ul class="chips">
+    <li>資料 <b>2020-01 起，5 分鐘一格</b></li>
+    <li>模型 <b>LightGBM 4.6 · Poisson</b></li>
+    <li>最後擬合 <b>2026-09-18</b></li>
+    <li>上線 <b>2026-09-18 起，每 5 分鐘</b></li>
+    <li>本頁更新 <b>2026-09-18</b></li>
+  </ul>
+</header>
+
+<div class="shell">
+<nav class="toc" aria-label="目錄">
+  <div class="toc-title">目錄</div>
+  <ol>
+    <li><a href="#what"><span class="toc-num">1</span>這個系統做什麼</a></li>
+    <li><a href="#data"><span class="toc-num">2</span>資料</a></li>
+    <li><a href="#method"><span class="toc-num">3</span>方法</a></li>
+    <li><a href="#features"><span class="toc-num">4</span>特徵值（66 個）</a></li>
+    <li><a href="#model"><span class="toc-num">5</span>最後採用的模型</a></li>
+    <li><a href="#validation"><span class="toc-num">6</span>驗證</a></li>
+    <li><a href="#trend"><span class="toc-num">7</span>預期趨勢</a></li>
+    <li><a href="#failed"><span class="toc-num">8</span>沒有用的東西</a></li>
+    <li><a href="#residual"><span class="toc-num">9</span>剩下的誤差在哪裡</a></li>
+    <li><a href="#deploy"><span class="toc-num">10</span>上線架構</a></li>
+    <li><a href="#hardware"><span class="toc-num">11</span>硬體需求</a></li>
+    <li><a href="#maintain"><span class="toc-num">12</span>維護</a></li>
+    <li><a href="#honesty"><span class="toc-num">13</span>方法學誠實交代</a></li>
+  </ol>
+</nav>
+
+<main>
+<details class="toc-mobile">
+  <summary>目錄</summary>
+  <ol>
+    <li><a href="#what">這個系統做什麼</a></li><li><a href="#data">資料</a></li><li><a href="#method">方法</a></li>
+    <li><a href="#features">特徵值（66 個）</a></li><li><a href="#model">最後採用的模型</a></li><li><a href="#validation">驗證</a></li>
+    <li><a href="#trend">預期趨勢</a></li><li><a href="#failed">沒有用的東西</a></li><li><a href="#residual">剩下的誤差在哪裡</a></li>
+    <li><a href="#deploy">上線架構</a></li><li><a href="#hardware">硬體需求</a></li><li><a href="#maintain">維護</a></li><li><a href="#honesty">方法學誠實交代</a></li>
+  </ol>
+</details>
+
+<!-- 1 -->
+<section id="what">
+  <span class="sec-num">§ 1</span>
+  <h2>這個系統做什麼</h2>
+  <p>看板上每 5 分鐘出現的是下面三行。這是 2026-09-18 00:45（台北時間）服務程式的實際輸出，也是第一個以完整歷史發出的預測：</p>
+  <div class="board" role="figure" aria-label="看板輸出範例">
+    <div class="stamp">2026-09-18 00:45 · 資料截至 00:45 · 模型擬合至 2026-09-18</div>
+    <p class="line">每小時來診 9 人（預期接下來 <b>1 小時 5 人</b>（95% 1–9）、<b>8 小時 31 人</b>（95% 21–42）、<b>24 小時 164 人</b>（95% 138–191））</p>
+    <p class="line">過去 24 小時 180 人，為前 182 天同日型平均的 <b>116%</b>（偏高）</p>
+    <p class="line">接下來 8 小時 ≥ 75 人的機率 <b>0%</b>（75 人 = 模型凍結時前一年最忙 10% 的門檻）</p>
+  </div>
+  <ul class="windows">
+    <li style="--wc:var(--w1)"><div class="w">1 小時</div><div class="h">「風暴快來了」的訊號</div><p>典型誤差只有 ±2 人，而且已經貼在計數噪音的下限上，所以點預測本身沒有意義；有意義的是排序與區間上界。對「該小時是否落在當日最忙 10%」的判別 AUC 0.833，模擬上限 0.837。</p></li>
+    <li style="--wc:var(--w8)"><div class="w">8 小時</div><div class="h">一個班會不會爆</div><p>只對最忙 10% 發警報時，真正爆量的班有 69% 被抓到，貼在模擬上限；可以直接講成機率（「≥ 75 人的機率 9%」），不必另外訓練分類器。</p></li>
+    <li style="--wc:var(--w24)"><div class="w">24 小時</div><div class="h">明天的人力</div><p>外部年 2025 的平均絕對誤差 13.8 人（8.3%）。剩下的誤差有將近七成是「今天是什麼樣的一天」這件事本身猜錯，不是再多一點即時資訊救得回來的。</p></li>
+  </ul>
+  <ul>
+    <li><strong>三個數字不可能互相矛盾。</strong>它們是同一條「每 5 分鐘到診率曲線」在三個長度上的積分，1 小時 ≤ 8 小時 ≤ 24 小時是結構保證，不是事後修補。</li>
+    <li><strong>區間是預測區間，不是速率的信賴區間。</strong>它同時裝了到診本身的計數噪音和速率估計的誤差，用負二項分布表示，離散度在每個原點當下量測。</li>
+    <li><strong>刻意不顯示的東西：</strong>「上升／回落」的方向字（預先登記的檢定在 holdout 年沒過，見 <a href="#trend">§ 7</a>）、預測的尖峰時刻（知道真實速率的 oracle 也只挑對 18%）、即時壅塞指標（沒有預測力）。</li>
+  </ul>
+</section>
+
+<!-- 2 -->
+<section id="data">
+  <span class="sec-num">§ 2</span>
+  <h2>資料</h2>
+  <p>模型只需要一件事：<strong>每一次急診掛號的時間戳</strong>。把它切成 5 分鐘一格，<code>c5</code> 是該 5 分鐘內掛號的不重複就診數，其餘全部由這一條序列與兩張日曆表算出來。院內的即時壅塞狀態（留觀人數、NEDOCS、待床數等）測過沒有預測力，服務路徑不需要。</p>
+  <h3>三段歷史，拼成一條連續面板</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>期間</th><th>來源</th><th class="n">5 分鐘格數</th><th>說明</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">2020-01-01 → 2025-12-31</td><td>研究用凍結面板</td><td class="n">631,296</td><td>與戰情室已發布的每小時來診欄逐列核對，0 筆不符。清理規則：同一就診序號只留第一列。</td></tr>
+      <tr><td class="mono">2026-01-01 → 2026-09-18</td><td>HIS 報表回填</td><td class="n">74,880</td><td>報表先<strong>去識別化</strong>再讀：只保留掛號時間、離院時間，就診序號換成單向雜湊（鹽值不保存，只能在同一檔內辨識重複列）；姓名、病歷號等欄位從不載入。</td></tr>
+      <tr><td class="mono">2026-09-17 19:40 → 現在</td><td>戰情室即時 feed</td><td class="n">每 5 分鐘 +1</td><td>戰情室的 Apps Script 每 5 分鐘抓一次掛號數寫入試算表；只有時間戳與人數。啟動當下回填的前 6 小時（來自單一快照）被視為不可信，直接捨棄。</td></tr>
+    </tbody>
+  </table></div>
+  <p>三段的優先序是 HIS 回填 &gt; 即時 feed &gt; 戰情室紀錄回推。資料中斷不是 0，而是標記成 <code>src_gap</code>，缺口會讓服務暫停，不會被讀成「很安靜」。目前面板 2020-01-01 起連續無缺口，共 706,186 格。</p>
+  <h3>兩張日曆表</h3>
+  <ul>
+    <li><strong>辦公日曆</strong>：行政院人事行政總處辦公日曆表（data.gov.tw dataset 14718），已載入 2020–2027。提供放假、連假長度與位置、距下次放假天數、春節等欄位。</li>
+    <li><strong>K–12 寒暑假</strong>：從 13 個官方來源（各縣市教育局行事曆、國教署公告、教育部法規）建成的每日二元表，已載入至 2027-07-31。這是 17 個外生變數裡唯一有用的一個（<a href="#failed">§ 8</a>）。</li>
+  </ul>
+  <div class="callout"><p><strong>隱私邊界。</strong>離開院內網路的只有「每 5 分鐘幾個人掛號」的計數與預測結果；本頁所有數字都是彙總統計，沒有任何個案列。研究面板中含小於 5 的儲存格的檔案沒有、也不會進入任何公開 repo。</p></div>
+
+  <figure id="fig-clock">
+    <p class="fig-title">來診的週時鐘：2025 年每小時平均來診人數</p>
+    <p class="fig-sub">依星期幾 × 時段共 168 格；只計無缺口的完整小時（n = 8,609）。單位：人／小時。</p>
+    <div class="chart" data-chart="clock"></div>
+    <div class="tip" aria-hidden="true"></div>
+    <figcaption>週日全天與週一上午最忙（最高 12.6 人／小時，週日 14–15 時），凌晨 3–5 時最靜（最低 2.0，週五 04–05 時）；2025 年平均每天 165.8 人。到診在這條時鐘周圍近似 Poisson 分布，模型真正的工作是估計這條線在接下來 25 個小時的高度會偏離時鐘多少。</figcaption>
+    <details class="data"><summary>查看數值表</summary><div class="tbl" data-table="clock"></div></details>
+  </figure>
+</section>
+
+<!-- 3 -->
+<section id="method">
+  <span class="sec-num">§ 3</span>
+  <h2>方法</h2>
+  <p>整個系統是一條「先估速率曲線，再積分，再套分布」的管線。三個窗口互相一致、區間含計數噪音，都是這個結構自然給的，不是額外的懲罰項。</p>
+  <ol class="flow">
+    <li><span class="t">原點所在小時的特徵</span><span class="d">66 個欄位：時鐘、日曆、原點前的落後值與滾動統計、同時段歷史、時鐘速率與漂移（<a href="#features">§ 4</a>）。全部只用原點當下已知的資料。</span></li>
+    <li><span class="t">LightGBM Poisson 迴歸估接下來 25 個時鐘小時的到診率</span><span class="d">一個模型、horizon 當特徵，同一原點出 25 列。訓練用整點原點（每小時一個），25 個 horizon 池化成一份擬合。</span><span class="f">r̂(A, h), h = 1..25 · 2 個種子平均</span></li>
+    <li><span class="t">拆成 5 分鐘</span><span class="d">λ5 = 小時率 ÷ 12 × 小時內剖面。剖面 12 格幾乎是平的（0.99–1.01），所以同一小時內的 12 個 5 分鐘原點共用一條曲線，只有積分的上下限不同。</span></li>
+    <li><span class="t">三個窗口 = 同一條曲線的三個積分</span><span class="d">Λ₁、Λ₈、Λ₂₄ 分別是 λ5 在 (T, T+1h]、(T, T+8h]、(T, T+24h] 的積分。24 小時窗口會碰到第 25 個時鐘小時，所以速率曲線要估到 h = 25。</span></li>
+    <li><span class="t">負二項分布，離散度在原點當下量測</span><span class="d">Var = Λ + Λ²/r。r 由最近 4 週「實際 vs 預測」的超額變異數識別，並做 (m−2)/m 的自由度修正；每個窗口各自一個 r。這是唯一在三次失敗後才找到、而且上線時完全拿得到的做法（<a href="#validation">§ 6</a>）。</span></li>
+    <li><span class="t">顯示</span><span class="d">點預測 = NB 中位數；95% 區間 = 2.5% / 97.5% 分位數；顯示前做單調夾緊（三年 31 萬個原點實際 0 筆非單調）。附加兩行：P(接下來 8 小時 ≥ 門檻) = 1 − NB.cdf(門檻 − 1)；現況水位 = 過去 24 小時實際人數 ÷ 前 182 天同日型平均。</span></li>
+  </ol>
+  <p><strong>為什麼不直接預測 24 小時總量？</strong>試過：直接建模 24 小時的 MAE 是 17.5，積分版是 15.7，差 12%。積分版從同一份資料拿到 25 倍的訓練列（每個原點 25 個目標小時），而且三個窗口自動一致。</p>
+  <p><strong>每次更新的成本</strong>是 25 列預測加三個內積，冷啟動整個程序也不到 4 秒（<a href="#hardware">§ 11</a>）。</p>
+
+  <figure id="fig-trend">
+    <p class="fig-title">一個真實原點的預期曲線：2026-09-16（週三）08:45</p>
+    <p class="fig-sub">上：模型對接下來 25 個時鐘小時的預期到診率。下：三個窗口的點預測、95% 區間與事後實際人數。</p>
+    <div class="chart" data-chart="curve"></div>
+    <ul class="legend">
+      <li><span class="sw" style="--c:var(--w1)"></span>預期到診率（人／小時）</li>
+      <li><span class="sw bar" style="--c:var(--band)"></span>已過的部分小時</li>
+    </ul>
+    <div class="chart" data-chart="windows"></div>
+    <ul class="legend">
+      <li><span class="sw dot" style="--c:var(--ink-2)"></span>點預測（中位數）</li>
+      <li><span class="sw" style="--c:var(--ink-2)"></span>95% 預測區間</li>
+      <li><span class="sw dia" style="--c:var(--mark-actual)"></span>事後實際人數</li>
+    </ul>
+    <div class="tip" aria-hidden="true"></div>
+    <figcaption>從 08:45 出發，曲線先維持上午的 8–9 人／小時，傍晚 17 時後滑向凌晨 3–4 時的 2.6，再於次日清晨回升。三個窗口的實際人數 8 / 66 / 151 都落在區間內。這條曲線就是系統對「接下來一天長什麼樣」的預期趨勢（<a href="#trend">§ 7</a>）；區間只對三個窗口發出，因為只有它們的離散度是量出來的。</figcaption>
+  </figure>
+</section>
+
+<!-- 4 -->
+<section id="features">
+  <span class="sec-num">§ 4</span>
+  <h2>特徵值（66 個）</h2>
+  <p>所有特徵不是時鐘事實就是緩慢變動的滾動統計量，小時內不會變。凡是「以 24 小時為跨距」的估計量都從 2 天前起算，因為 h = 25 時「目標小時減 24 小時」正好是原點的下一個小時，那是洩漏。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>群組</th><th class="n">欄數</th><th>欄位</th><th class="n">增益佔比</th></tr></thead>
+    <tbody>
+      <tr><td>時鐘速率與漂移</td><td class="n">12</td><td class="mono">rate_w13 rate_w26 rate_d28 rate_d7 rate_w26_relevel rate_w13_relevel rate_spread lvl_28d_over_26w rate_dt_56d rate_dt_56d_n rate_dt_112d rate_dt_112d_n</td><td class="n">85.3%</td></tr>
+      <tr><td>近期均值與比值</td><td class="n">7</td><td class="mono">y_mean6 y_mean24 y_mean72 y_mean168 y_mean720 y_ratio24_720 y_ratio168_720</td><td class="n">8.5%</td></tr>
+      <tr><td>目標小時的時鐘</td><td class="n">11</td><td class="mono">tgt_hour tgt_dow tgt_dowhour tgt_is_weekend tgt_is_mon tgt_sin_h tgt_cos_h tgt_sin_doy tgt_cos_doy tgt_dom tgt_trend_days</td><td class="n">3.6%</td></tr>
+      <tr><td>同時段歷史</td><td class="n">13</td><td class="mono">y_tgt_w1 … y_tgt_w6 y_tgt_w8 y_tgt_w_med4 y_tgt_w_mean8 y_tgt_w_std4 y_tgt_d2 y_tgt_d3 y_tgt_d4</td><td class="n">1.6%</td></tr>
+      <tr><td>辦公日曆</td><td class="n">8</td><td class="mono">cal_is_off cal_daytype cal_run_len cal_run_pos cal_days_to_off cal_days_since_off cal_is_cny cal_days_to_cny</td><td class="n">1.0%</td></tr>
+      <tr><td>學校行事曆</td><td class="n">1</td><td class="mono">sch_k12_out</td><td class="n">&lt; 0.1%</td></tr>
+      <tr><td>原點落後值</td><td class="n">13</td><td class="mono">y_orig_lag0 lag1 lag2 lag3 lag5 lag23 lag24 lag25 lag47 lag48 lag167 lag168 lag169</td><td class="n">0%</td></tr>
+      <tr><td>Horizon</td><td class="n">1</td><td class="mono">horizon</td><td class="n">0%</td></tr>
+    </tbody>
+  </table></div>
+  <figure id="fig-gain">
+    <p class="fig-title">增益佔比（現役模型，2026-09-18 擬合，兩個種子合計）</p>
+    <p class="fig-sub">LightGBM gain importance，按群組加總。</p>
+    <div class="chart" data-chart="gain"></div>
+    <div class="tip" aria-hidden="true"></div>
+    <figcaption>前六名單一欄位：<span class="mono">rate_d28</span> 47.5%、<span class="mono">rate_w26_relevel</span> 25.0%、<span class="mono">rate_w26</span> 6.2%、<span class="mono">y_mean24</span> 5.3%、<span class="mono">rate_dt_112d</span> 2.2%、<span class="mono">rate_d7</span> 1.5%。模型主要在做的事是「把最近 4 週與 26 週的時鐘速率調到今天的水準」。</figcaption>
+  </figure>
+  <p><strong>增益為 0 的 16 個欄位為什麼還留著？</strong>刪掉它們在單次執行上看起來持平（+0.004，落在噪音帶內），但配對種子測試在兩組種子上都變差（1.2037 → 1.2078、1.2036 → 1.2055）。在 <code>colsample_bytree = 0.8</code> 下，被刪掉的欄位會改變每棵樹看到的欄位組合，某一個種子上增益為 0 不代表沒有價值。</p>
+</section>
+
+<!-- 5 -->
+<section id="model">
+  <span class="sec-num">§ 5</span>
+  <h2>最後採用的模型</h2>
+  <dl class="kv">
+    <dt>演算法</dt><dd>LightGBM 4.6.0，<code>objective = poisson</code>，速率模型（不是分類器）</dd>
+    <dt>樹</dt><dd>固定 200 棵，<strong>沒有 early stopping</strong>；<code>learning_rate 0.05</code>、<code>num_leaves 63</code>、<code>min_child_samples 40</code>、<code>subsample 0.8</code>（每棵）、<code>colsample_bytree 0.8</code></dd>
+    <dt>集成</dt><dd>2 個種子平均。3 個或 5 個種子在外部年上完全沒有差別（1.2081 vs 1.2079）。</dd>
+    <dt>訓練資料</dt><dd>2020-01-01 → 2026-09-18，整點原點 × 25 個 horizon = <span class="num">1,351,175</span> 列 × 66 特徵</dd>
+    <dt>需要的歷史</dt><dd>特徵最深回看 27 週（4,536 小時）</dd>
+    <dt>區間</dt><dd>負二項；離散度視窗 4 週，在原點當下量測，(m−2)/m 自由度修正</dd>
+    <dt>風暴門檻</dt><dd>75 人／8 小時：擬合時用切點前 52 週、切點前結束、無缺口的 8 小時窗口取最忙 10% 的門檻，凍結在模型檔裡（2025 年底的模型是 78）</dd>
+    <dt>重擬</dt><dd>每季一次。每月重擬實測讓 24 小時變差；新模型檔帶著上一個模型對切點前 696 個原點小時的速率曲線，讓離散度在交界處連續</dd>
+    <dt>模型檔</dt><dd>一個 JSON：2 個 booster 字串、66 個特徵名、12 格小時內剖面、門檻、擬合截止日、承接的殘差</dd>
+  </dl>
+  <h3>為什麼是固定 200 棵</h3>
+  <p>對抗式審查指出 early stopping 的內部驗證集與訓練集共用最多 24 個目標小時，等於帶著洩漏挑樹數。加上 25 小時的淨空後，樹數暴增、dev 從 1.2003 退到 1.2214。最後的解法是拿掉 early stopping、固定棵數；200 對 300 在 dev 上分不出來，事先寫好規則後在 holdout 上讀一次，200 以 day-block 區間勝出。修掉洩漏在 dev 與 holdout 上持平，在 2025 上好了 0.009。</p>
+  <h3>研究上的冠軍是另一個，但上不了線</h3>
+  <p>研究階段最好的組態是 <strong>TabPFN × LightGBM 兩條速率曲線 50/50 混合</strong>（dev 1.1874 / holdout 1.1416 / 2025 1.1819），比單獨的 LightGBM 好約 0.01。但 TabPFN 是 in-context 模型，沒有權重可以存，每個原點都要帶著上下文重算一次，需要 GPU 或外部 API。<strong>現在上線的是 LightGBM 那一半加學校欄位：dev 1.2003 / holdout 1.1456 / 2025 1.1921。</strong>補上另一半的方法已經量過可行（本機 timeseries checkpoint），但還沒做。</p>
+</section>
+
+<!-- 6 -->
+<section id="validation">
+  <span class="sec-num">§ 6</span>
+  <h2>驗證</h2>
+  <p>資料切成四段：訓練 2020–2022、<strong>dev 2023</strong>（所有 keep / discard 決策都在這一年做）、<strong>holdout 2024</strong>（只讀 11 次）、<strong>external 2025</strong>（所有決策做完之後才拿到）。2025 年的來診水準 6.84 人／小時是模型從來沒訓練過的：2022 是 8.01、2023 是 7.62、2024 是 7.07。</p>
+  <p>主要指標 <code>skill</code> = 三個窗口各自「MAE ÷ 該窗口在速率完全已知時的 Poisson MAE」的平均。<strong>1.000 代表速率完全已知</strong>；它是讓三個窗口可以互相比較的分母，不是任何模型的極限。</p>
+  <div class="tbl"><table>
+    <caption>skill（越低越好）</caption>
+    <thead><tr><th>組態</th><th class="n">dev 2023</th><th class="n">holdout 2024</th><th class="n">external 2025</th></tr></thead>
+    <tbody>
+      <tr><td><strong>現役：LightGBM + 學校欄位，固定 200 棵</strong></td><td class="n"><strong>1.2003</strong></td><td class="n"><strong>1.1456</strong></td><td class="n"><strong>1.1921</strong></td></tr>
+      <tr><td>研究冠軍：TabPFN × LightGBM 混合（未上線）</td><td class="n">1.1874</td><td class="n">1.1416</td><td class="n">1.1819</td></tr>
+      <tr><td>週時鐘基線（前 13 週速率積分）</td><td class="n">1.3831</td><td class="n">—</td><td class="n">—</td></tr>
+    </tbody>
+  </table></div>
+  <p>holdout 與 external 都沒有比 dev 差，沒有對 dev 過擬合的跡象。這是整份研究最強的一個證據。</p>
+
+  <div class="tbl"><table>
+    <caption>外部年 2025 的絕對數字（研究出貨組態）</caption>
+    <thead><tr><th>窗口</th><th class="n">實際平均</th><th class="n">MAE</th><th class="n">相對誤差</th><th class="n">對 Poisson 下限</th><th class="n">95% 區間覆蓋率</th></tr></thead>
+    <tbody>
+      <tr><td>接下來 1 小時</td><td class="n">6.91 人</td><td class="n">2.09</td><td class="n">30.2%</td><td class="n">1.026</td><td class="n">0.972</td></tr>
+      <tr><td>接下來 8 小時</td><td class="n">55.3 人</td><td class="n">6.88</td><td class="n">12.4%</td><td class="n">1.173</td><td class="n">0.952</td></tr>
+      <tr><td>接下來 24 小時</td><td class="n">165.7 人</td><td class="n">13.81</td><td class="n">8.3%</td><td class="n">1.346</td><td class="n">0.940</td></tr>
+    </tbody>
+  </table></div>
+  <p>1 小時貼在 Poisson 下限上（1.026）：在這個模型的速率下，1 小時剩下的誤差幾乎全是計數噪音。整數區間做不到剛好 95%——速率完全已知時 <code>[ppf(.025), ppf(.975)]</code> 在 1 小時的實際覆蓋率是 0.970，所以 1 小時的 0.972 不是校準失敗；真正還欠的是 8 小時與 24 小時的 0.3 與 0.85 個百分點，而且漏掉的部分是對稱的，上界沒有系統性地樂觀。</p>
+
+  <h3>95% 區間：三次失敗才找到對的做法</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>做法</th><th class="n">覆蓋率 1h / 8h / 24h</th><th>結果</th></tr></thead>
+    <tbody>
+      <tr><td>Poisson（只有計數噪音）</td><td class="n">0.960 / 0.879 / 0.768</td><td>速率估計本身的誤差不會隨窗口變長而縮小，24 小時嚴重不足</td></tr>
+      <tr><td>NB，離散度用整個訓練集校準</td><td class="n">0.976 / 0.994 / 0.995</td><td>過寬：把 COVID 年的波動搬到未來</td></tr>
+      <tr><td>NB，離散度用訓練集最後 52 週校準</td><td class="n">0.992 / 1.000 / 1.000</td><td>更糟：2022 是最不穩定的一年</td></tr>
+      <tr><td><strong>NB，離散度在原點當下、用最近 4 週殘差量測</strong></td><td class="n"><strong>0.970 / 0.961 / 0.960</strong></td><td>會跟著模型變好而自動收緊；上線時完全拿得到</td></tr>
+    </tbody>
+  </table></div>
+  <p>視窗長度 4 週是用「月間覆蓋率全距最小」判定的，不是用 skill。<strong>1 月（年度交界 + 春節 + 流感季）是全年最弱的月份</strong>：2025 年 24 小時覆蓋率 1 月 0.872、2 月 1.000。服務程式每次呼叫都把過去 4 週真的會發出的區間重新發一次、對實際到診算命中率，低於 90% 就在紀錄裡印警告；目前是 0.966 / 0.969 / 0.945。</p>
+
+  <h3>「風暴快要來了」：接近極限</h3>
+  <div class="tbl"><table>
+    <caption>外部年 2025，「風暴」= 該長度窗口中最忙的 10%；只對預測最高的 10% 發警報</caption>
+    <thead><tr><th>窗口</th><th class="n">門檻</th><th class="n">AUC</th><th class="n">模擬上限</th><th class="n">捕捉率</th><th class="n">上限捕捉率</th></tr></thead>
+    <tbody>
+      <tr><td>1 小時</td><td class="n">≥ 12 人</td><td class="n">0.833</td><td class="n">0.837</td><td class="n">42.4%</td><td class="n">42.2%</td></tr>
+      <tr><td>8 小時</td><td class="n">≥ 78 人</td><td class="n">0.943</td><td class="n">0.953</td><td class="n">69.1%</td><td class="n">69.2%</td></tr>
+      <tr><td>24 小時</td><td class="n">≥ 202 人</td><td class="n">0.957</td><td class="n">0.962</td><td class="n">65.2%</td><td class="n">69.2%</td></tr>
+    </tbody>
+  </table></div>
+  <p>沒有預測力時捕捉率是 10%。「模擬上限」是把這個模型的速率當成真實速率、只剩計數噪音時的成績，量的是這個模型之下還剩多少餘地，不是任何模型的極限。</p>
+
+  <h3>上板的那個機率是準的嗎</h3>
+  <div class="tbl"><table>
+    <caption>2025 年逐原點，現役 LightGBM 模型，對凍結門檻（當時 80 人／8 小時）的 P(≥ 門檻)</caption>
+    <thead><tr><th>預測機率帶</th><th class="n">原點數</th><th class="n">平均預測</th><th class="n">實際發生</th><th class="n">實際發生的 95% 區間</th></tr></thead>
+    <tbody>
+      <tr><td>0–2%</td><td class="n">60,820</td><td class="n">0.3%</td><td class="n">0.4%</td><td class="n">[0.2, 0.6]</td></tr>
+      <tr><td>2–5%</td><td class="n">14,185</td><td class="n">3.3%</td><td class="n">4.0%</td><td class="n">[2.4, 5.8]</td></tr>
+      <tr><td>5–10%</td><td class="n">8,950</td><td class="n">7.1%</td><td class="n">4.1%</td><td class="n">[2.7, 5.7] <span class="warn">偏高</span></td></tr>
+      <tr><td>10–20%</td><td class="n">6,481</td><td class="n">14.1%</td><td class="n">11.8%</td><td class="n">[7.4, 16.6]</td></tr>
+      <tr><td>20–35%</td><td class="n">3,473</td><td class="n">26.3%</td><td class="n">24.5%</td><td class="n">[18.1, 31.4]</td></tr>
+      <tr><td>35–55%</td><td class="n">3,708</td><td class="n">45.6%</td><td class="n">58.5%</td><td class="n">[48.2, 68.1] <span class="warn">偏保守</span></td></tr>
+      <tr><td>55–100%</td><td class="n">5,189</td><td class="n">74.0%</td><td class="n">78.0%</td><td class="n">[68.8, 86.5]</td></tr>
+    </tbody>
+  </table></div>
+  <p>全年平均預測 8.41% 對實際 8.74%，Brier 0.0409 對氣候基線 0.0797（技巧分 +0.49）。低機率的幾帶很準，這是最要緊的（不會亂叫）；35–55% 那一帶偏保守，模型說四成多、實際近六成，所以看板上的「45%」讀成「五到六成」比較對。這一帶只等於大約 16 個獨立的日子，是「值得盯著」，不是「已經證實」。</p>
+</section>
+
+<!-- 7 -->
+<section id="trend">
+  <span class="sec-num">§ 7</span>
+  <h2>預期趨勢：「還在漲還是趨緩」</h2>
+  <p>一開始的想法是用股票分析的方式（布林通道之類）猜接下來的趨勢往上還是往下，讓一線人員知道「還在漲」或「趨緩了」。這一節交代它變成了什麼。</p>
+  <h3>技術指標當特徵：死路</h3>
+  <p>八個指標（Bollinger %b、MACD、RSI、OBV、ATR、Donchian、Aroon、TRIX）都做出來測了，對上本模型的殘差 |r| &lt; 0.03，全部是零。陽性對照有過（同樣的指標對上一個粗糙的時鐘基線是 +0.128 / +0.210 / +0.287），所以不是算錯，是這個模型已經把它們的內容吃光了。</p>
+  <h3>但它們沒有死在顯示上：看板上的兩行</h3>
+  <ul>
+    <li><strong>現況水位 L</strong> = 過去 24 小時實際人數 ÷ 「同日型、前 182 天」的平均。這是觀測數字上的算術，不會錯，只會過時；它就是布林 %b 想做而沒做對的那件事。括號裡的「大致正常／偏高／明顯偏高」只是顯示用的分界（0.92 / 1.08 / 1.20，看著 2025 年挑的，沒有檢定）；同日型只分四類（工作日／週六／週日／平日假日）。把它讀成「臨床上正常」是過度解讀。</li>
+    <li><strong>P(接下來 8 小時 ≥ 門檻)</strong>：從同一個 NB 分布直接算，門檻凍結在模型裡。上一節驗過它的可靠度。</li>
+  </ul>
+  <h3>方向字「上升／回落／持平」：做出來了，決定不顯示</h3>
+  <p>規則在看任何數字之前就寫死：方向字只有在檢定 M1 通過時才上板——在相同的發話率下，方向正確率要贏過「現在高所以待會會回落」這個完全不需要模型的均值回歸基線至少 3 個百分點，而且 day-block bootstrap 的 95% 下界要大於 0。係數在 dev 2023 擬合後凍結，holdout 2024 只看一次。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>年份</th><th class="n">方向正確率 − 均值回歸基線</th><th>判定</th></tr></thead>
+    <tbody>
+      <tr><td>dev 2023（係數在同一年擬合）</td><td class="n">+3.1 [−0.0, +6.3]</td><td>下界含 0</td></tr>
+      <tr><td><strong>holdout 2024（仲裁，只看一次）</strong></td><td class="n"><strong>+2.3 [−1.2, +5.3]</strong></td><td><strong>不過</strong></td></tr>
+      <tr><td>external 2025</td><td class="n">+8.6 [+4.8, +12.5]</td><td>過，但那是基線失靈的一年（三年裡的例外）</td></tr>
+    </tbody>
+  </table></div>
+  <p>第二個理由更根本：<strong>方向講的是「變化」，但壓垮一個班的是「水位」。</strong>一個又忙又穩定的班，方向上是誠實的「持平」，而「持平」在 119% 的水位上會被讀成「可以放心」。實測在「實際落在該時段前 10% 忙」的原點裡，狀態機會說回落或持平的比例是 76%（2023）／82%（2024）／74%（2025）。所以方向字照算、照存，但 <code>SHOW_DIRECTION = False</code>，程式碼裡寫著要拿什麼證據才能翻成 True。</p>
+  <h3>那「預期趨勢」現在是什麼</h3>
+  <p>模型每 5 分鐘都會產出接下來 25 個小時的預期到診率曲線（<a href="#fig-trend">§ 3 的圖</a>）。那條曲線就是系統對「接下來一天長什麼樣」誠實的預期趨勢：它會告訴你晚上 8 點之後會滑下去、清晨 7 點又爬起來，而且它不需要方向字，因為它畫的是整條線，不是一個相對於現在的箭頭。目前看板只顯示三個窗口的數字，把這條曲線畫成一條小圖是顯示層的改動（服務程式多回傳 25 個數字、看板多畫一條線），模型不用動；<strong>這件事還沒做</strong>。曲線上不會附每小時的區間，因為只有三個窗口的離散度是量出來的。</p>
+</section>
+
+<!-- 8 -->
+<section id="failed">
+  <span class="sec-num">§ 8</span>
+  <h2>沒有用的東西（每一個都實測過）</h2>
+  <h3>17 個環境與流行病變數：全部無效</h3>
+  <p>天氣落後值（前 1 / 2 / 3 / 7 日的氣溫、雨量、濕度、溫差）、類流感就診百分比 lag2 與 lag3、腸病毒 lag2、腹瀉 lag2、PM2.5 前 24 小時與 7 日均值——全部加進去之後 skill 從 1.2510 變成 1.2670，變差，而且沒有一個進入前 8 名重要度。殘差相關最強的幾個（露點 +0.20、日均溫日變化 +0.20）全是「目標時段的觀測值」，上線時只能靠天氣預報，所以只測了嚴格上線可得的版本。</p>
+  <p>失敗的 17 個全是連續、當天觀測、而且和季節共線的量；成功的那一個（K–12 寒暑假）是銳利、日層級、法定、而且平滑季節項畫不出來的體制切換——正弦畫不出 7 月 1 日和 8 月 30 日那兩條垂直線。這不是「再多加幾個外生變數就會好」，是「外生變數要長那個樣子才有用」。</p>
+  <h3>颱風停班：效應是真的，但學不起來</h3>
+  <p>新北市 2020–2024 只有 6 個停班日，訓練年（2020–2022）是 0 個。用配對基線量：<strong>停班當天來診是基線的 1.231 倍，6 天全部偏高，平均多 35 人次</strong>（p = 0.031）；沒有「過後湧入」（+1 天 1.151、+2 天 1.008、+3 天 0.995），也沒有事前搶看；有陸警但沒停班的日子是 0.996。動到來診量的是行政停班，不是颱風本身。訓練集零樣本，模型不可能學到，建議做成人工覆寫（停班日把曲線乘 1.23），目前尚未實作。</p>
+  <h3>類流感（ILI）沒有污染</h3>
+  <p>疾管署的類流感門急診就診百分比含本院，擔心不 lag 會是變相洩漏。測了：相關在各 lag 之間平坦（lag0 +0.149、lag1 +0.150、lag2 +0.162、lag3 +0.140），排除本院所在分區的 placebo 是 +0.150。如果本院量能在驅動那個數字，lag0 會明顯最高、placebo 會明顯最低，兩者都沒發生。公布時程是第 N 週的數字在第 N+1 週的週一／週二凌晨才上線，所以 lag2 才是每個原點都拿得到的版本，但加進模型之後沒有幫助。</p>
+  <h3>其他</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>做法</th><th>結果</th></tr></thead>
+    <tbody>
+      <tr><td>即時壅塞指標（留觀人數、NEDOCS、EDWIN、待床數等 16 欄）</td><td>沒有預測力，整組拿掉結果不變</td></tr>
+      <tr><td>直接建模 24 小時總量</td><td>MAE 17.5 vs 積分版 15.7，差 12%</td></tr>
+      <tr><td>Poisson offset（把週時鐘當 init_score）</td><td>+0.044，24 小時明顯變差：offset 等於強迫係數剛好是 1.0</td></tr>
+      <tr><td>每 4 週重擬</td><td>1h / 8h 繼續改善但 24h 變差；每季就夠</td></tr>
+      <tr><td>3 個或 5 個種子</td><td>2 個就飽和；外部年完全沒有差別</td></tr>
+      <tr><td>滾動 104 週訓練視窗</td><td>+0.008，噪音內；COVID 年既沒幫忙也沒扯後腿</td></tr>
+      <tr><td>指數加權時鐘速率</td><td>+0.008；多一個和既有欄位相關 0.99 的欄位，稀釋掉的比買到的多</td></tr>
+      <tr><td>小時內剖面改成線性傾斜</td><td>平手；剖面本來就是平的（SD 0.007）</td></tr>
+      <tr><td>刪掉 16 個零增益欄位</td><td>兩組配對種子都變差（<a href="#features">§ 4</a>）</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 9 -->
+<section id="residual">
+  <span class="sec-num">§ 9</span>
+  <h2>剩下的誤差在哪裡</h2>
+  <p>把 dev 上每個原點的誤差拆成「同一天所有原點共用的部分」和「原點自己的部分」：</p>
+  <div class="tbl"><table>
+    <thead><tr><th>窗口</th><th class="n">誤差總 SD</th><th class="n">日共用成分 SD</th><th class="n">佔誤差變異數</th><th class="n">原點自有成分 SD</th></tr></thead>
+    <tbody>
+      <tr><td>1 小時</td><td class="n">2.85</td><td class="n">0.68</td><td class="n">5.6%</td><td class="n">2.77</td></tr>
+      <tr><td>8 小時</td><td class="n">9.44</td><td class="n">5.80</td><td class="n">37.7%</td><td class="n">7.46</td></tr>
+      <tr><td><strong>24 小時</strong></td><td class="n">19.66</td><td class="n"><strong>16.31</strong></td><td class="n"><strong>68.8%</strong></td><td class="n">10.99</td></tr>
+    </tbody>
+  </table></div>
+  <p>24 小時窗口剩下的誤差有將近七成是「今天是什麼樣的一天」這件事本身猜錯：同一天的 288 個原點共用同一個誤差，近期資訊每 5 分鐘都在更新，卻改不動那個共用成分。它是一個日層級的需求預測問題，有效樣本是 1,096 個訓練日；所有在原點當下拿得到的日層級外生變數都測過而且都沒有用。學校行事曆正是打在這個成分上，所以它的增益集中在 24 小時（−1.9%）而 1 小時幾乎不動——這不是巧合，是這張表預測的。</p>
+</section>
+
+<!-- 10 -->
+<section id="deploy">
+  <span class="sec-num">§ 10</span>
+  <h2>上線架構</h2>
+  <p>LightGBM 放不進 Google Apps Script，所以預測跑在一台長開的 Windows 電腦上，透過戰情室的試算表與 Apps Script 交換資料。戰情室網頁本身不需要那台電腦；預測那幾行需要。</p>
+  <ul class="lanes">
+    <li><div class="where">戰情室 · Apps Script</div><span class="what">每 5 分鐘抓一次掛號數</span>寫入試算表的 Arrivals5m 工作表，只有時間戳與人數。另一支動作把預測結果存成最新值與紀錄，網頁讀最新值顯示。</li>
+    <li><div class="where">長開的 Windows 電腦 · Python 服務</div><span class="what">整點後 25 秒起、每 5 分鐘一輪</span>拉 feed → 拼接面板（HIS 回填 &gt; 即時 feed &gt; 紀錄回推）→ 五道閘 → 預測 → 以 HTTPS + token 回寫。每天凌晨 3 點後刷新一次紀錄回推。</li>
+    <li><div class="where">戰情室 · 網頁</div><span class="what">顯示三行預測</span>資料落後或缺口太大時顯示暫停的原因，不出數。時間一律以台北時間處理（服務電腦的系統時區不影響）。</li>
+  </ul>
+  <h3>五道閘：寧可不出數，不說錯話</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>閘</th><th>條件</th><th>擋的是什麼</th></tr></thead>
+    <tbody>
+      <tr><td>FRESH</td><td>最後一格距現在 ≤ 15 分鐘</td><td>feed 停了還在講話</td></tr>
+      <tr><td>COMPLETE</td><td>最近 1 小時無缺口；最近 24 小時缺口 &lt; 12 格</td><td>把中斷讀成「很安靜」，而且給出最窄的區間</td></tr>
+      <tr><td>CALENDAR</td><td>日曆涵蓋到現在 + 26 小時 + 14 天</td><td>「距下次放假天數」在檔尾被截斷</td></tr>
+      <tr><td>HISTORY</td><td>面板 ≥ 4,536 小時，且最近 4 週的有效殘差窗口 ≥ 一半</td><td>沒有離散度就沒有區間</td></tr>
+      <tr><td>COVERAGE</td><td>最近 27 週的缺口 ≤ 10%</td><td>特徵回看的歷史大半是洞</td></tr>
+    </tbody>
+  </table></div>
+  <p>在 2025 年的回放裡，這些閘會擋掉 2.4% 的原點（7 段 73–581 格的中斷）。現況水位另外要求它自己的 182 天參照期缺口 ≤ 10%。</p>
+  <h3>免安裝封包</h3>
+  <p>搬到新電腦不需要安裝 Python：封包內含 python.org 的 3.12 embeddable 版、鎖定版本的套件、程式、資料與模型，解壓縮後先執行「測一次」，再執行「安裝成開機自動執行」（Windows 工作排程器裡的一個工作）。醫院網路會用自己的憑證重簽 HTTPS，所以服務信任 Windows 憑證存放區，不只信任 Python 內建的清單。每季更新只換一個 2.4 MB 的小 zip（模型 + 兩張日曆表 + 歷史）。</p>
+  <div class="callout"><p><strong>上線抽數的地雷。</strong>研究面板是用已出院的紀錄建的（歷史上只有 0.006% 的列沒有離院時間）。上線時不能照抄這個條件：此刻還在急診室裡的病人依定義沒有離院時間，而最近 4–8 小時正是特徵回看最重的區段。上線的條件是「掛號時間落在視窗內」。</p></div>
+</section>
+
+<!-- 11 -->
+<section id="hardware">
+  <span class="sec-num">§ 11</span>
+  <h2>硬體需求</h2>
+  <p>不需要 GPU。下面是在開發用筆電上實測的數字（Intel Core i7-8750H，6 核 12 執行緒，32 GB 記憶體，Windows 11）：</p>
+  <div class="tbl"><table>
+    <thead><tr><th>工作</th><th>頻率</th><th class="n">牆鐘時間</th><th class="n">CPU 時間</th><th class="n">峰值記憶體</th></tr></thead>
+    <tbody>
+      <tr><td>一次預測（冷啟動整個程序，含讀面板與模型）</td><td>每 5 分鐘</td><td class="n">3.8 s</td><td class="n">—</td><td class="n">162 MB</td></tr>
+      <tr><td>每季重擬（135 萬列 × 66 特徵 × 2 種子 × 200 棵）</td><td>每季</td><td class="n">59 s</td><td class="n">484 s（12 執行緒）</td><td class="n">1.14 GB</td></tr>
+    </tbody>
+  </table></div>
+  <dl class="kv">
+    <dt>磁碟</dt><dd>封包 zip 103 MB，解壓後 278 MB；紀錄與面板成長很慢，預留 500 MB 即可</dd>
+    <dt>最低配置</dt><dd>Windows 10 / 11 64 位元、任何雙核以上的 x64 處理器、4 GB 記憶體（重擬時需 1.5 GB 可用）、能長時間開機。雙核機器上重擬大約 5 分鐘，服務不受影響。</dd>
+    <dt>網路</dt><dd>能以 HTTPS 連到 Google Apps Script 與試算表；院內 TLS 檢查的憑證由 Windows 憑證存放區處理</dd>
+    <dt>權限</dt><dd>不需要系統管理員：排程工作以登入使用者身分執行，登入後自動啟動</dd>
+    <dt>軟體</dt><dd>封包自帶 Python 3.12.4（embeddable）、numpy 2.4.4、pandas 2.3.3、pyarrow 23.0.1、scipy 1.17.1、lightgbm 4.6.0、requests 2.34.2、truststore 0.10.4；不碰系統的 Python</dd>
+    <dt>院內落地</dt><dd>同一套程式可以改讀院內查詢（掛號時間落在視窗內）直接落地在 HIS 旁，不經過 Google；成本相同</dd>
+  </dl>
+</section>
+
+<!-- 12 -->
+<section id="maintain">
+  <span class="sec-num">§ 12</span>
+  <h2>維護</h2>
+  <ol class="flow">
+    <li><span class="t">每季：用最新的 HIS 報表重擬</span><span class="d">匯出「掛號時間、就診序號、離院時間」三欄 → 去識別化 → 回填面板 → 重擬到最新日期 → 產生更新 zip → 在服務電腦上解壓縮覆蓋、重新執行安裝。實際操作約 10 分鐘，重擬本身 1 分鐘。風暴門檻在每次重擬時重算。</span></li>
+    <li><span class="t">日曆表要比資料早一年</span><span class="d">辦公日曆已載入到 2027；K–12 寒暑假表已載入到 2027-07-31，之前要接上下一學年。不要用法規預設值外推寒假日期（115 學年度把 1/21–1/23 排成補課日）。表不夠長時服務會暫停並說明原因，不會默默少餵欄位。</span></li>
+    <li><span class="t">看紀錄裡的兩個警告</span><span class="d">過去 4 週的 95% 區間實際命中率低於 90% 時會印警告（1 月最容易出現）；面板拼接時若仍在使用紀錄回推的近似值，看板會多一行說明。</span></li>
+    <li><span class="t">封包裡的檔案清單就是合約</span><span class="d">模型用 66 個特徵訓練、上線只餵 65 個的情況不會在明顯的地方壞掉，它只是開始說錯話；所以特徵讀的每一張表都在封包清單裡，缺表直接拋錯。</span></li>
+  </ol>
+</section>
+
+<!-- 13 -->
+<section id="honesty">
+  <span class="sec-num">§ 13</span>
+  <h2>方法學誠實交代</h2>
+  <ul>
+    <li><strong>對 dev 做了 45 次 keep / discard 決策</strong>（外加 27 次不計分的探針與診斷），holdout 讀 11 次，external 讀 11 次。兩次「用 holdout 做決定」都是先寫規則再看數字：方向字（不過，所以沒上板）與固定棵數 200 對 300。</li>
+    <li><strong>種子噪音 SD = 0.0088</strong>：skill 差距小於 0.018 一律當噪音；落在噪音帶內但保留的改動（重擬頻率、葉數減半、2 種子）各有非指標的理由，全部記錄在案。配對種子測試可以把可分辨的差距壓到約 0.002。</li>
+    <li><strong>每次實驗固定 240 秒預算</strong>，超時煞車的執行一律作廢；同一組態重跑的數值抖動是 0.0001。</li>
+    <li><strong>對抗式審查（Codex，15 條，8 條 P1）每一條都查證過</strong>，主要改動：服務程式不再需要未來資料；長駐程序會偵測新模型與新面板；新舊模型交界的離散度連續；四道閘變五道；風暴門檻改用切點前無缺口的窗口；每個出貨增益補 day-block bootstrap 區間；拿掉帶洩漏的 early stopping；日曆改按日期 join、缺列直接拋錯；「理論極限」改稱「模擬上限」；水位句子明寫參照物。</li>
+    <li><strong>不要把 2025 的進步記在學校欄位頭上。</strong>它單獨加在 LightGBM 上在 dev 是噪音內（−0.0017 [−0.008, +0.003]），增益在混合模型裡才穩定放大；2025 年的進步主要是混合買到的，而混合沒有上線。</li>
+    <li><strong>還沒做的事</strong>：TabPFN 那一半接進服務；颱風停班的人工覆寫；日曆公告的 as-of 驗證（每個歷史原點當時是否已知那一版日曆）；預期曲線上看板。</li>
+    <li><strong>本頁不含</strong>：任何個案資料、試算表與端點識別、憑證或 token、院內主機資訊。</li>
+  </ul>
+</section>
+</main>
+</div>
+
+<footer>
+  <p>本頁所有數字皆為彙總統計，無個案資料。資料範圍 2020-01-01 至 2026-09-18（台北慈濟醫院急診掛號時間戳）。研究、實作與本頁均由自主實驗迴圈完成並經對抗式審查；最後一次擬合 2026-09-18。</p>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var DAYS = ["週一","週二","週三","週四","週五","週六","週日"];
+  // 2025 mean arrivals per hour by hour-of-week (Mon 00–01 first), complete gap-free hours only
+  var CLOCK = [5.62,4.24,3.82,2.8,2.71,2.73,3.61,5.37,7.29,9.92,10.29,9.61,8.25,7.45,7.29,8.75,7.88,7.71,7.67,9.49,9.88,9.16,8.63,6.98,
+    5.86,4.23,3.87,3.23,2.83,3.15,2.9,4.08,6.42,8.73,8.56,9.37,8.63,7.73,8.02,7.38,7.23,7.02,7.02,9.17,8.98,8.25,8.25,6.46,
+    5.26,4.45,3.04,2.58,3.19,2.58,2.81,4.6,6.77,8.17,8.89,7.79,7.55,7.7,8.11,7.47,7.83,6.04,7.49,8.89,9.32,8.45,7.94,6.69,
+    5.06,3.86,2.84,3.22,2.57,2.65,2.98,4.65,6.43,8.35,9.12,7.67,8.0,8.2,8.39,8.27,7.57,8.0,7.86,8.51,8.9,8.43,8.16,6.59,
+    4.98,3.96,3.27,3.04,2.04,2.24,2.73,4.43,6.22,8.37,9.31,9.02,7.43,7.2,7.69,8.0,7.08,6.88,7.24,8.78,9.37,8.02,8.43,7.78,
+    5.36,4.18,4.06,3.16,2.76,2.9,3.31,4.8,6.57,7.92,9.53,9.63,8.84,8.92,8.94,8.06,8.33,8.65,9.1,9.51,9.37,9.55,8.84,7.86,
+    5.7,4.68,4.08,3.5,3.02,2.92,3.48,5.58,7.92,10.64,11.4,12.14,10.22,11.26,12.64,11.86,10.24,10.18,10.54,10.92,11.62,10.2,9.36,8.44];
+  // expected arrivals per clock hour from the 2026-09-16 08:45 origin: hour 08–09 (current, 15 min already elapsed) … 08–09 next day
+  var CURVE = [6.84,8.62,8.81,8.59,7.59,7.73,7.57,7.48,7.31,7.58,7.42,8.43,8.71,8.39,8.38,6.99,5.24,3.79,3.58,2.91,2.57,2.66,3.07,4.25,7.22];
+  var CURVE_START_HOUR = 8;
+  var WINDOWS = [
+    {name:"1 小時",  color:"var(--w1)",  point:8,   lo:3,   hi:14,  actual:8,   lam:8.2},
+    {name:"8 小時",  color:"var(--w8)",  point:63,  lo:48,  hi:80,  actual:66,  lam:63.6},
+    {name:"24 小時", color:"var(--w24)", point:155, lo:129, hi:181, actual:151, lam:154.8}
+  ];
+  var GAIN = [
+    {g:"時鐘速率與漂移", n:12, v:85.3, cols:"rate_d28 47.5 · rate_w26_relevel 25.0 · rate_w26 6.2 · rate_dt_112d 2.2 · rate_d7 1.5 …"},
+    {g:"近期均值與比值", n:7, v:8.5, cols:"y_mean24 5.3 · y_mean72 1.0 · y_ratio168_720 0.9 · y_ratio24_720 0.7 …"},
+    {g:"目標小時的時鐘", n:11, v:3.6, cols:"tgt_sin_doy 0.7 · tgt_cos_doy · tgt_hour · tgt_dowhour …"},
+    {g:"同時段歷史", n:13, v:1.6, cols:"y_tgt_w_std4 · y_tgt_w_mean8 · y_tgt_w_med4 …"},
+    {g:"辦公日曆", n:8, v:1.0, cols:"cal_days_to_off · cal_days_since_off · cal_is_off …"},
+    {g:"學校行事曆", n:1, v:0.04, cols:"sch_k12_out（< 0.1%）"},
+    {g:"原點落後值", n:13, v:0, cols:"13 個落後值增益皆為 0（保留原因見正文）"},
+    {g:"Horizon", n:1, v:0, cols:"horizon 增益 0（仍是每列的必要索引）"}
+  ];
+  var SVGNS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs, parent){ var e = document.createElementNS(SVGNS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+  function txt(x, y, s, attrs, parent){ var t = el("text", Object.assign({x:x, y:y}, attrs||{}), parent); t.textContent = s; return t; }
+  function fmt1(v){ return (Math.round(v*10)/10).toFixed(1); }
+
+  function tipFor(fig){
+    var tip = fig.querySelector(".tip");
+    return {
+      show: function(html, clientX, clientY){
+        var r = fig.getBoundingClientRect();
+        tip.innerHTML = html;
+        tip.style.left = (clientX - r.left) + "px";
+        tip.style.top = (clientY - r.top) + "px";
+        tip.classList.add("show");
+      },
+      hide: function(){ tip.classList.remove("show"); }
+    };
+  }
+
+  // ---------- Fig 1: weekly clock ----------
+  function figClock(){
+    var fig = document.getElementById("fig-clock"), host = fig.querySelector('[data-chart="clock"]');
+    var W = 860, H = 300, L = 40, R = 14, T = 22, B = 40, pw = W - L - R, ph = H - T - B, ymax = 14;
+    var svg = el("svg", {viewBox:"0 0 "+W+" "+H, role:"img", "aria-label":"2025 年每小時平均來診人數，依星期幾與時段"}, host);
+    var grid = el("g", {"class":"grid"}, svg);
+    for (var y = 0; y <= ymax; y += 2){ var yy = T + ph - ph*y/ymax; el("line", {x1:L, x2:L+pw, y1:yy, y2:yy}, grid); txt(L-8, yy+4, String(y), {"text-anchor":"end"}, svg); }
+    var xs = function(i){ return L + pw * i / 167; }, ys = function(v){ return T + ph - ph * v / ymax; };
+    for (var d = 0; d < 7; d++){
+      var x0 = xs(d*24), x1 = xs(Math.min(d*24+23, 167));
+      if (d > 0) el("line", {x1:xs(d*24 - 0.5), x2:xs(d*24 - 0.5), y1:T, y2:T+ph, stroke:"var(--line-2)", "stroke-dasharray":"2 3"}, svg);
+      txt((x0+x1)/2, H - 14, DAYS[d], {"text-anchor":"middle", fill:"var(--ink-2)"}, svg);
+    }
+    txt(L, 12, "人／小時", {fill:"var(--muted)"}, svg);
+    var dpath = "";
+    for (var i = 0; i < 168; i++) dpath += (i ? "L" : "M") + xs(i).toFixed(1) + " " + ys(CLOCK[i]).toFixed(1);
+    el("path", {d:dpath, fill:"none", stroke:"var(--w1)", "stroke-width":2, "stroke-linejoin":"round"}, svg);
+    // direct labels at the max and min
+    var imax = CLOCK.indexOf(Math.max.apply(null, CLOCK)), imin = CLOCK.indexOf(Math.min.apply(null, CLOCK));
+    el("circle", {cx:xs(imax), cy:ys(CLOCK[imax]), r:4, fill:"var(--w1)", stroke:"var(--surface)", "stroke-width":2}, svg);
+    txt(xs(imax)-8, ys(CLOCK[imax])-8, "最高 " + fmt1(CLOCK[imax]), {"text-anchor":"end", fill:"var(--ink-2)"}, svg);
+    el("circle", {cx:xs(imin), cy:ys(CLOCK[imin]), r:4, fill:"var(--w1)", stroke:"var(--surface)", "stroke-width":2}, svg);
+    txt(xs(imin), ys(CLOCK[imin])+16, "最低 " + fmt1(CLOCK[imin]), {"text-anchor":"middle", fill:"var(--ink-2)"}, svg);
+    // hover
+    var cross = el("line", {x1:0, x2:0, y1:T, y2:T+ph, stroke:"var(--line-2)", visibility:"hidden"}, svg);
+    var dot = el("circle", {r:4.5, fill:"var(--w1)", stroke:"var(--surface)", "stroke-width":2, visibility:"hidden"}, svg);
+    var hit = el("rect", {x:L, y:T, width:pw, height:ph, fill:"transparent"}, svg);
+    var tip = tipFor(fig);
+    function move(ev){
+      var pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+      var p = pt.matrixTransform(svg.getScreenCTM().inverse());
+      var i = Math.max(0, Math.min(167, Math.round((p.x - L) / pw * 167)));
+      cross.setAttribute("x1", xs(i)); cross.setAttribute("x2", xs(i)); cross.setAttribute("visibility", "visible");
+      dot.setAttribute("cx", xs(i)); dot.setAttribute("cy", ys(CLOCK[i])); dot.setAttribute("visibility", "visible");
+      var h = i % 24;
+      tip.show(DAYS[Math.floor(i/24)] + " " + (h<10?"0":"")+h + "–" + ((h+1)<10?"0":"")+(h+1) + " 時 · " + fmt1(CLOCK[i]) + " 人／小時", ev.clientX, ev.clientY);
+    }
+    hit.addEventListener("pointermove", move);
+    hit.addEventListener("pointerleave", function(){ cross.setAttribute("visibility","hidden"); dot.setAttribute("visibility","hidden"); tip.hide(); });
+    // table view
+    var tb = fig.querySelector('[data-table="clock"]'), t = document.createElement("table"), html = "<thead><tr><th></th>";
+    for (var hh = 0; hh < 24; hh++) html += '<th class="n">' + hh + '</th>';
+    html += "</tr></thead><tbody>";
+    for (var dd = 0; dd < 7; dd++){ html += "<tr><th>" + DAYS[dd] + "</th>"; for (var h2 = 0; h2 < 24; h2++) html += '<td class="n">' + fmt1(CLOCK[dd*24+h2]) + "</td>"; html += "</tr>"; }
+    t.innerHTML = html + "</tbody>"; tb.appendChild(t);
+  }
+
+  // ---------- Fig 2: expected curve + windows ----------
+  function figTrend(){
+    var fig = document.getElementById("fig-trend"), host = fig.querySelector('[data-chart="curve"]');
+    var W = 860, H = 250, L = 40, R = 14, T = 22, B = 34, pw = W - L - R, ph = H - T - B, ymax = 10, n = CURVE.length;
+    var svg = el("svg", {viewBox:"0 0 "+W+" "+H, role:"img", "aria-label":"2026-09-16 08:45 原點的 25 小時預期到診率曲線"}, host);
+    var grid = el("g", {"class":"grid"}, svg);
+    for (var y = 0; y <= ymax; y += 2){ var yy = T + ph - ph*y/ymax; el("line", {x1:L, x2:L+pw, y1:yy, y2:yy}, grid); txt(L-8, yy+4, String(y), {"text-anchor":"end"}, svg); }
+    var xs = function(i){ return L + pw * i / (n-1); }, ys = function(v){ return T + ph - ph * v / ymax; };
+    // the elapsed part of the origin hour (08:00–08:45) is shaded: the window integrals start at 08:45
+    el("rect", {x:xs(0), y:T, width:xs(0.75)-xs(0), height:ph, fill:"var(--band)"}, svg);
+    for (var i = 0; i < n; i++){
+      var hr = (CURVE_START_HOUR + i) % 24;
+      if (i % 2 === 0) txt(xs(i), H - 12, (hr<10?"0":"")+hr, {"text-anchor":"middle"}, svg);
+      if (hr === 0) el("line", {x1:xs(i), x2:xs(i), y1:T, y2:T+ph, stroke:"var(--line-2)", "stroke-dasharray":"2 3"}, svg);
+    }
+    txt(xs(16.5), T+12, "次日 →", {"text-anchor":"start", fill:"var(--muted)"}, svg);
+    txt(L, 12, "人／小時", {fill:"var(--muted)"}, svg);
+    txt(xs(0.37), T+ph-6, "原點 08:45", {"text-anchor":"middle", fill:"var(--muted)", "font-size":"11"}, svg);
+    var dpath = "";
+    for (var j = 0; j < n; j++) dpath += (j ? "L" : "M") + xs(j).toFixed(1) + " " + ys(CURVE[j]).toFixed(1);
+    el("path", {d:dpath, fill:"none", stroke:"var(--w1)", "stroke-width":2, "stroke-linejoin":"round"}, svg);
+    for (var k = 0; k < n; k++) el("circle", {cx:xs(k), cy:ys(CURVE[k]), r:3, fill:"var(--w1)", stroke:"var(--surface)", "stroke-width":1.5}, svg);
+    var imin = CURVE.indexOf(Math.min.apply(null, CURVE)), imax = CURVE.indexOf(Math.max.apply(null, CURVE));
+    txt(xs(imax), ys(CURVE[imax])-9, fmt1(CURVE[imax]), {"text-anchor":"middle", fill:"var(--ink-2)"}, svg);
+    txt(xs(imin), ys(CURVE[imin])+16, fmt1(CURVE[imin]), {"text-anchor":"middle", fill:"var(--ink-2)"}, svg);
+    var cross = el("line", {x1:0, x2:0, y1:T, y2:T+ph, stroke:"var(--line-2)", visibility:"hidden"}, svg);
+    var hit = el("rect", {x:L, y:T, width:pw, height:ph, fill:"transparent"}, svg);
+    var tip = tipFor(fig);
+    hit.addEventListener("pointermove", function(ev){
+      var pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+      var p = pt.matrixTransform(svg.getScreenCTM().inverse());
+      var i = Math.max(0, Math.min(n-1, Math.round((p.x - L) / pw * (n-1))));
+      cross.setAttribute("x1", xs(i)); cross.setAttribute("x2", xs(i)); cross.setAttribute("visibility", "visible");
+      var hr = (CURVE_START_HOUR + i) % 24;
+      tip.show((i + CURVE_START_HOUR >= 24 ? "次日 " : "") + (hr<10?"0":"")+hr + "–" + ((hr+1)%24<10?"0":"")+((hr+1)%24) + " 時 · 預期 " + fmt1(CURVE[i]) + " 人／小時", ev.clientX, ev.clientY);
+    });
+    hit.addEventListener("pointerleave", function(){ cross.setAttribute("visibility","hidden"); tip.hide(); });
+
+    // windows strip: dot-and-interval per window, one scale (people), log-free because the three are separate rows with their own tick label
+    var host2 = fig.querySelector('[data-chart="windows"]');
+    var W2 = 860, rowH = 34, T2 = 8, H2 = T2 + rowH*3 + 6, L2 = 74, R2 = 118, pw2 = W2 - L2 - R2, vmax = 200;
+    var s2 = el("svg", {viewBox:"0 0 "+W2+" "+H2, role:"img", "aria-label":"三個窗口的點預測、95% 區間與實際人數"}, host2);
+    var x2 = function(v){ return L2 + pw2 * v / vmax; };
+    WINDOWS.forEach(function(w, r){
+      var cy = T2 + rowH*r + rowH/2;
+      txt(L2 - 10, cy + 4, w.name, {"text-anchor":"end", fill:"var(--ink-2)", "font-weight":"500"}, s2);
+      el("line", {x1:x2(0), x2:x2(vmax), y1:cy, y2:cy, stroke:"var(--grid)"}, s2);
+      var g = el("g", {}, s2);
+      el("rect", {x:x2(w.lo), y:cy-5, width:x2(w.hi)-x2(w.lo), height:10, rx:3, fill:w.color, opacity:.35}, g);
+      el("line", {x1:x2(w.lo), x2:x2(w.hi), y1:cy, y2:cy, stroke:w.color, "stroke-width":2}, g);
+      el("circle", {cx:x2(w.point), cy:cy, r:5, fill:w.color, stroke:"var(--surface)", "stroke-width":2}, g);
+      var ax = x2(w.actual);
+      el("rect", {x:ax-4.5, y:cy-4.5, width:9, height:9, transform:"rotate(45 "+ax+" "+cy+")", fill:"var(--mark-actual)", stroke:"var(--surface)", "stroke-width":1.5}, g);
+      txt(x2(vmax) + 10, cy + 4, w.point + "（" + w.lo + "–" + w.hi + "）· 實際 " + w.actual, {fill:"var(--ink-2)"}, s2);
+      var hit2 = el("rect", {x:L2, y:cy-rowH/2, width:pw2, height:rowH, fill:"transparent"}, s2);
+      hit2.addEventListener("pointermove", function(ev){ tip.show(w.name + "：預期 " + w.point + " 人（95% " + w.lo + "–" + w.hi + "），期望值 " + w.lam + "，實際 " + w.actual + " 人", ev.clientX, ev.clientY); });
+      hit2.addEventListener("pointerleave", tip.hide);
+    });
+  }
+
+  // ---------- Fig 3: gain share bars ----------
+  function figGain(){
+    var fig = document.getElementById("fig-gain"), host = fig.querySelector('[data-chart="gain"]');
+    var W = 860, rowH = 30, T = 6, L = 150, R = 70, pw = W - L - R, H = T + rowH*GAIN.length + 4;
+    var svg = el("svg", {viewBox:"0 0 "+W+" "+H, role:"img", "aria-label":"各特徵群組的增益佔比"}, host);
+    var tip = tipFor(fig);
+    GAIN.forEach(function(d, i){
+      var cy = T + rowH*i + rowH/2, wpx = Math.max(pw * d.v / 100, d.v > 0 ? 2 : 0);
+      txt(L - 10, cy + 4, d.g, {"text-anchor":"end", fill:"var(--ink-2)"}, svg);
+      el("rect", {x:L, y:cy-9, width:pw, height:18, fill:"var(--grid)", rx:3}, svg);
+      if (wpx > 0) el("rect", {x:L, y:cy-9, width:wpx, height:18, fill:"var(--w1)", rx:3}, svg);
+      txt(L + wpx + 8, cy + 4, (d.v >= 0.1 ? fmt1(d.v) + "%" : (d.v > 0 ? "< 0.1%" : "0%")) + "  ·  " + d.n + " 欄", {fill:"var(--ink-2)"}, svg);
+      var hit = el("rect", {x:0, y:cy-rowH/2, width:W, height:rowH, fill:"transparent"}, svg);
+      hit.addEventListener("pointermove", function(ev){ tip.show(d.g + "：" + d.cols, ev.clientX, ev.clientY); });
+      hit.addEventListener("pointerleave", tip.hide);
+    });
+  }
+
+  // ---------- TOC highlight ----------
+  function toc(){
+    var links = Array.prototype.slice.call(document.querySelectorAll("nav.toc a"));
+    var secs = links.map(function(a){ return document.querySelector(a.getAttribute("href")); });
+    if (!("IntersectionObserver" in window)) return;
+    var current = null;
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){ if (e.isIntersecting) current = e.target; });
+      if (!current) return;
+      links.forEach(function(a, i){ a.classList.toggle("is-active", secs[i] === current); });
+    }, {rootMargin:"-10% 0px -70% 0px", threshold:0});
+    secs.forEach(function(s){ if (s) io.observe(s); });
+  }
+
+  try { figClock(); } catch(e) { console.error(e); }
+  try { figTrend(); } catch(e) { console.error(e); }
+  try { figGain(); } catch(e) { console.error(e); }
+  toc();
+})();
+</script>
+</body>
+</html>
