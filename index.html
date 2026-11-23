@@ -199,6 +199,7 @@ footer{max-width:1120px;margin:40px auto 0;padding-top:20px;border-top:1px solid
     <li><a href="#hardware"><span class="toc-num">11</span>硬體需求</a></li>
     <li><a href="#maintain"><span class="toc-num">12</span>維護</a></li>
     <li><a href="#honesty"><span class="toc-num">13</span>方法學誠實交代</a></li>
+<li><a href="#swarm-backtest"><span class="toc-num">14</span>模型改進與離線回測</a></li>
   </ol>
 </nav>
 
@@ -210,6 +211,7 @@ footer{max-width:1120px;margin:40px auto 0;padding-top:20px;border-top:1px solid
     <li><a href="#features">特徵值（66 個）</a></li><li><a href="#model">最後採用的模型</a></li><li><a href="#validation">驗證</a></li>
     <li><a href="#trend">預期趨勢</a></li><li><a href="#failed">沒有用的東西</a></li><li><a href="#residual">剩下的誤差在哪裡</a></li>
     <li><a href="#deploy">上線架構</a></li><li><a href="#hardware">硬體需求</a></li><li><a href="#maintain">維護</a></li><li><a href="#honesty">方法學誠實交代</a></li>
+<li><a href="#swarm-backtest">模型改進與離線回測</a></li>
   </ol>
 </details>
 
@@ -567,6 +569,28 @@ footer{max-width:1120px;margin:40px auto 0;padding-top:20px;border-top:1px solid
     <li><strong>本頁不含</strong>：任何個案資料、試算表與端點識別、憑證或 token、院內主機資訊。</li>
   </ul>
 </section>
+
+<section id="swarm-backtest">
+<h2>模型改進研究：候選方法與離線回測</h2>
+<p><strong>2026-11-23｜已完成方案互評與資料對齊；模型比較待回測。</strong> Claude Opus 5.5 High、Gemini 4 Carbon High、Gemini 4 Neon Extra High 先獨立提案，再以同等權重互評。以下是研究計畫與目前已核對的結果，不代表正式看板已換模型。</p>
+<h3>要測什麼？</h3>
+<div class="tbl"><table>
+<thead><tr><th scope="col">目標</th><th scope="col">候選方法</th><th scope="col">怎麼判斷有沒有改善</th></tr></thead>
+<tbody>
+<tr><td>1／8／24 小時來診量</td><td>以同星期同時段、週時鐘和簡單計數迴歸為基線，另對照現行 LightGBM Poisson。逐項測試台灣日曆、按時距調整模型與輕量集成；比較連續需求狀態修正和小時／日總量調和。</td><td>各時距看平均絕對誤差（MAE）與高低估偏差；另檢查假日與高量時段，避免整體平均掩蓋退步。</td></tr>
+<tr><td>95% 預測區間</td><td>固定同一條點預測曲線，比較現行四週估計的負二項區間、依情境調整離散度的負二項區間及分位數模型。另測只在實績到期後更新的自適應校準。</td><td>同看覆蓋率、區間寬度及上下尾漏出比例；不以單純放寬區間當作改善。</td></tr>
+<tr><td>8 小時爆量機率與警報</td><td>先固定同一爆量定義，比較現行負二項尾端機率、條件負二項、Beta 重校準及正則化機率修正。班別容量與相對異常另列為探索性事件。</td><td>比較 Brier 分數與預測機率對實際發生率的吻合度；在同樣警報預算下看漏報、誤報及提前量。</td></tr>
+</tbody>
+</table></div>
+<h3>怎麼做公平比較？</h3>
+<p>只用公開逐時彙總資料做隔離回測。各模型使用相同整點、相同目標窗口與季度切分；以擴張窗訓練，每個切點前保留 25 小時淨空。2023 年選型，鎖定設定後回放 2024–2025 年；這些時段曾被檢視，<strong>不是未見驗證</strong>。特徵與校準只用起算時點已取得的資訊。若公開資料無法忠實重建正式模型，就明標「逐時近似基準」，不可當成正式看板的原模型。</p>
+<h3>目前有什麼結果？</h3>
+<p>資料稽核已核對 <strong>52,608 個小時</strong>，其中 <strong>258 個缺資料小時</strong>保留為缺值，不視為 0。時間對齊後固定 <strong>25,992 個共同預測起點</strong>：2023 年 8,760 個、2024 年 8,784 個、2025 年 8,448 個。這是資料稽核結果；<strong>目前沒有可報告的候選模型比較分數</strong>，不能據此宣稱更準、區間更可靠或能更早預警。</p>
+<h3>先做什麼，還有什麼未定？</h3>
+<p>先跑點預測基線與候選比較，再用同一批預測值測區間及爆量校準。三方都建議先用既有來診量與日曆；<a href="https://www.nature.com/articles/s41746-026-03378-8">動態社會健康決定因素（SDoH）</a>暫不納入首輪，須確認有合規的本地來源、預測當時已可取得，且相對現有特徵有額外訊號。日共用誤差的修正方法、區間校準的穩定性，留待同場回測。</p>
+<p>如果歷史回放顯示有益，再做<strong>前瞻性靜默觀察</strong>：事先鎖定版本、指標與通過門檻，保存預測當時的輸出，實績到期後才和現行系統比較。不更新正式看板、不發送警報，也不影響排班。</p>
+</section>
+
 </main>
 </div>
 
